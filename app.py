@@ -303,6 +303,8 @@ def train_original(data_dir: Path, output_dir: Path):
     merchant_risk["Risk_Label"] = np.where(merchant_risk["Prediction"].eq(1), "Flagged", "Normal")
 
     output_dir.mkdir(parents=True, exist_ok=True)
+    captured_tx = merged.loc[merged["Status"].eq("Captured")].copy()
+    captured_tx.to_csv(output_dir / "transactions_original_captured.csv.gz", index=False, compression="gzip")
     daily.to_csv(output_dir / "daily_sales_prepared.csv", index=False)
     business_daily.to_csv(output_dir / "business_daily_prepared.csv", index=False)
     merchant_risk.to_csv(output_dir / "merchant_risk.csv", index=False)
@@ -366,6 +368,9 @@ def train_new_if_available(data_dir: Path, output_dir: Path, original_state: dic
     pred_gb = fitted["Gradient Boosting"].predict(X_new)
     save_submission(merchant_new_ordered, features_new.index, pred_gb, output_dir / "predictions_new_gradient_boosting.csv")
 
+    merged_new, _, _ = prepare_daily_data(transactions, merchant_new, business_new, status_new)
+    merged_new.loc[merged_new["Status"].eq("Captured")].to_csv(
+        output_dir / "transactions_new_captured.csv.gz", index=False, compression="gzip")
     daily_new.to_csv(output_dir / "daily_sales_new_prepared.csv", index=False)
     business_daily_new.to_csv(output_dir / "business_daily_new_prepared.csv", index=False)
     return {
@@ -390,113 +395,198 @@ def run_batch(data_dir: Path, output_dir: Path) -> None:
 def render_streamlit_app(output_dir: Path) -> None:
     import streamlit as st
     import plotly.graph_objects as go
+    import plotly.express as px
 
     st.set_page_config(page_title="Merchant Sales Anomaly Monitor", page_icon="📈", layout="wide")
     st.title("Merchant Sales Anomaly Monitor")
-    st.caption("Captured transactions only | Merchant-level classifications and separate historical daily-deviation markers")
-    st.caption("Select a dataset and model. Only models with available, validated prediction files are selectable.")
+    st.caption("Big Data Analytics | Captured sales only | Original and new merchant portfolios")
+    out = Path(__file__).resolve().parent / "outputs"
+    if not out.exists(): out = output_dir
 
-    base = Path(__file__).resolve().parent
-    out = base / 'outputs'
-    if not out.exists() and output_dir.exists():
-        out = output_dir
-    portfolios = {
-        'Original portfolio': ('original', 'daily_sales_prepared.csv', 'business_daily_prepared.csv'),
-        'New portfolio': ('new', 'daily_sales_new_prepared.csv', 'business_daily_new_prepared.csv'),
-    }
-    model_names = {'Isolation Forest': 'isolation_forest', 'Random Forest': 'random_forest',
-                   'Gradient Boosting': 'gradient_boosting', 'Logistic Regression': 'logistic_regression'}
-    ready = {name: params for name,params in portfolios.items() if (out / params[1]).is_file() and (out / params[2]).is_file()}
-    if not ready:
-        st.error(f"No prepared portfolio data in {out}. Generate outputs locally in batch mode and commit the outputs directory to GitHub.")
-        st.stop()
-    c1,c2,c3,c4 = st.columns([1.1,1.3,1.15,1.7])
-    with c1: dataset = st.selectbox('Dataset', list(ready))
-    prefix,daily_name,business_name = ready[dataset]
-    available = {k:v for k,v in model_names.items() if (out / f'predictions_{prefix}_{v}.csv').is_file()}
-    if not available and prefix == 'original' and (out/'merchant_risk.csv').exists():
-        available={'Isolation Forest':'isolation_forest'}
-    if not available:
-        st.error('No prediction CSVs for selected portfolio. Generate the model outputs locally.'); st.stop()
-    with c2: chosen = st.selectbox('Merchant model', list(available))
-    if len(available) < 4:
-        st.info(f"{dataset} currently has {len(available)} available model(s). The other models will appear once their prediction CSVs are provided.")
-    if prefix == 'original' and chosen != 'Isolation Forest':
-        st.warning('Original-portfolio supervised predictions are IN-SAMPLE fits to Isolation Forest pseudo-labels, not independent evaluation results.')
+    models = {"Isolation Forest": "isolation_forest", "Random Forest": "random_forest",
+              "Gradient Boosting": "gradient_boosting", "Logistic Regression": "logistic_regression"}
+    portfolios = {"Original portfolio": ("original", "daily_sales_prepared.csv", "business_daily_prepared.csv"),
+                  "New portfolio": ("new", "daily_sales_new_prepared.csv", "business_daily_new_prepared.csv")}
 
     @st.cache_data(show_spinner=False)
-    def load_csv(path):
+    def read_csv(path):
         return pd.read_csv(path)
-    daily = load_csv(out/daily_name).copy()
-    categories = load_csv(out/business_name).copy()
-    pred_path=out/f'predictions_{prefix}_{available[chosen]}.csv'
-    if pred_path.is_file():
-        pred=load_csv(pred_path).copy()
-    else:
-        pred=load_csv(out/'merchant_risk.csv')[['Merchant','Prediction']].copy()
-    for name, df in [('Daily',daily),('Business categories',categories)]:
-        if 'Date' not in df or 'Merchant' not in df:
-            st.error(f'{name} data missing Date or Merchant'); st.stop()
-        df['Date']=pd.to_datetime(df['Date'],errors='coerce')
-        if df['Date'].isna().any(): st.error(f'{name} contains invalid dates'); st.stop()
-    flag='High_Confidence_Day'
-    if flag not in daily.columns and 'High_Confidence_Anomaly_Day' in daily.columns:
-        daily=daily.rename(columns={'High_Confidence_Anomaly_Day':flag})
-    if flag not in daily.columns: st.error('Missing anomaly-day flag column'); st.stop()
-    mapped=daily[flag].astype(str).str.lower().str.strip().map({'true':True,'false':False,'1':True,'0':False})
-    if mapped.isna().any(): st.error('Invalid anomaly-day flag values'); st.stop()
-    daily[flag]=mapped.astype(bool)
-    if not {'Merchant','Prediction'}.issubset(pred): st.error('Prediction file missing required columns'); st.stop()
-    if pred['Merchant'].isna().any() or pred['Merchant'].duplicated().any() or not pred['Prediction'].isin([0,1]).all():
-        st.error('Prediction file contains duplicate names, missing values or non-binary predictions'); st.stop()
-    names=set(daily['Merchant'].dropna().unique())
-    if names!=set(pred['Merchant']): st.error('Merchant names in predictions and daily data do not match'); st.stop()
-    pred=pred.sort_values('Merchant').reset_index(drop=True)
-    with c3: filt=st.selectbox('Merchant filter',['All merchants','Flagged only'])
-    merchants=pred.loc[pred['Prediction'].eq(1),'Merchant'].tolist() if filt=='Flagged only' else pred['Merchant'].tolist()
-    if not merchants: st.info('No flagged merchants for selected model'); st.stop()
-    with c4: selected=st.selectbox('Merchant',merchants)
-    k1,k2,k3,k4=st.columns(4)
-    k1.metric('Merchants',f"{len(pred):,}")
-    k2.metric('Flagged by selected model',f"{int(pred['Prediction'].sum()):,}")
-    k3.metric('Historical flagged days',f"{int(daily[flag].sum()):,}")
-    k4.metric('Captured sales (USD)',f"{daily['Daily_Sales'].sum():,.2f}")
-    row=pred.loc[pred['Merchant'].eq(selected)].iloc[0]
-    md=daily.loc[daily['Merchant'].eq(selected)].sort_values('Date').copy()
-    days=md.loc[md[flag]]
-    st.subheader(selected)
-    st.markdown(f"**{chosen} classification:** {'Anomalous' if int(row['Prediction']) else 'Normal'} · **Historical deviation days:** {len(days)}")
-    if chosen=='Isolation Forest' and prefix=='original' and (out/'merchant_risk.csv').is_file():
-        score_df=load_csv(out/'merchant_risk.csv')
-        if 'Anomaly_Score' in score_df:
-            match=score_df.loc[score_df['Merchant'].eq(selected),'Anomaly_Score']
-            if not match.empty: st.caption(f"Original Isolation Forest anomaly score: {float(match.iloc[0]):.4f} (larger = more unusual)")
-    fig=go.Figure()
-    fig.add_trace(go.Scatter(x=md['Date'],y=md['Daily_Sales'],mode='lines+markers',name='Actual daily sales',line={'color':'#2166ac'}))
-    fig.add_trace(go.Scatter(x=md['Date'],y=md['Expected_Sales'],mode='lines',name='Historical expectation',line={'dash':'dash','color':'#727a86'}))
-    fig.add_trace(go.Scatter(x=days['Date'],y=days['Daily_Sales'],mode='markers',name='Unusual day',marker={'color':'#cb2027','size':10}))
-    fig.update_layout(height=420,xaxis_title='Date',yaxis_title='Sales (USD)',margin={'l':10,'r':10,'t':15,'b':15})
-    st.plotly_chart(fig,use_container_width=True)
-    st.caption('Day markers use the past-only historical-deviation rule and do not change with the selected merchant-level model.')
-    st.subheader('Business-category investigation')
-    dates=md['Date'].dt.date.tolist()
-    default=days['Date'].max().date() if len(days) else dates[-1]
-    date=st.selectbox('Investigate date',dates,index=dates.index(default))
-    bd=categories.loc[categories['Merchant'].eq(selected) & categories['Date'].eq(pd.Timestamp(date))].copy()
-    if bd.empty: st.info('No category data for this date')
-    else:
-        bd['Gap_USD']=bd['Business_Sales']-bd['Expected_Business_Sales']
-        bd['Absolute_Gap_USD']=bd['Gap_USD'].abs()
-        bd=bd.sort_values('Absolute_Gap_USD',ascending=False)
-        cols=[x for x in ['Business','Business_Sales','Expected_Business_Sales','Gap_USD','Absolute_Gap_USD'] if x in bd]
-        st.dataframe(bd[cols],use_container_width=True,hide_index=True)
-        st.bar_chart(bd.set_index('Business')[['Business_Sales','Expected_Business_Sales']])
-        st.caption('Category expectations are calculated separately and may not sum to the merchant-level expected total.')
-    st.subheader('Classification table and export')
-    st.dataframe(pred,use_container_width=True,hide_index=True)
-    st.download_button('Download selected model predictions',pred[['Merchant','Prediction']].to_csv(index=False).encode(),file_name=f'predictions_{prefix}_{available[chosen]}.csv',mime='text/csv')
-    st.caption('For academic submission, compare regenerated predictions with the exact files uploaded to the external Model Evaluator before replacing them.')
 
+    @st.cache_data(show_spinner=False)
+    def read_transactions(path):
+        return pd.read_csv(path, compression="gzip", low_memory=False)
+
+    def prepared_info(prefix, daily_fn, business_fn):
+        return (out / daily_fn).is_file() and (out / business_fn).is_file()
+
+    available_portfolios = [n for n,(prefix,d,b) in portfolios.items() if prepared_info(prefix,d,b)]
+    if not available_portfolios:
+        st.error("No prepared datasets found. Run batch processing locally and upload the outputs/ CSVs.")
+        st.stop()
+
+    tab_monitor, tab_compare, tab_transactions, tab_methods = st.tabs([
+        "Merchant monitoring", "Original vs New / Model evaluator", "Transactions", "Methodology & data status"])
+
+    with tab_monitor:
+        c1,c2,c3,c4 = st.columns([1.2,1.3,1.1,1.6])
+        with c1: portfolio = st.selectbox("Dataset", available_portfolios, key="portfolio")
+        prefix,daily_file,business_file=portfolios[portfolio]
+        options={name:short for name,short in models.items() if (out/f"predictions_{prefix}_{short}.csv").exists()}
+        if not options:
+            st.error("This portfolio has no prediction file."); st.stop()
+        with c2: model=st.selectbox("Merchant model",list(options),key="model")
+        daily=read_csv(out/daily_file).copy()
+        categories=read_csv(out/business_file).copy()
+        preds=read_csv(out/f"predictions_{prefix}_{options[model]}.csv").copy()
+        for df in (daily,categories):
+            df["Date"]=pd.to_datetime(df["Date"],errors="coerce")
+        flag="High_Confidence_Day"
+        if flag not in daily and "High_Confidence_Anomaly_Day" in daily:
+            daily=daily.rename(columns={"High_Confidence_Anomaly_Day":flag})
+        if flag not in daily: st.error("Missing daily historical flag column"); st.stop()
+        daily[flag]=daily[flag].astype(str).str.lower().map({"true":True,"false":False,"1":True,"0":False}).fillna(False)
+        if preds["Merchant"].duplicated().any() or not preds["Prediction"].isin([0,1]).all():
+            st.error("Invalid prediction file: duplicate names or nonbinary values"); st.stop()
+        if set(preds.Merchant)!=set(daily.Merchant):
+            st.error("Prediction names do not match the prepared daily dataset"); st.stop()
+        preds=preds.sort_values("Merchant").reset_index(drop=True)
+        with c3: merchant_filter=st.selectbox("Merchant filter",["All merchants","Flagged only"])
+        merchants=preds.loc[preds.Prediction.eq(1),"Merchant"].tolist() if merchant_filter=="Flagged only" else preds.Merchant.tolist()
+        if not merchants: st.info("No merchants satisfy this filter"); st.stop()
+        with c4: merchant=st.selectbox("Merchant",merchants)
+        if len(options)<4:
+            st.info(f"{portfolio}: {len(options)} model(s) available. Additional models require their prediction CSVs; predictions are not fabricated.")
+        if prefix=="original" and model!="Isolation Forest":
+            st.warning("Original supervised predictions are in-sample fits to Isolation Forest pseudo-labels; these are not independently evaluated results.")
+        k1,k2,k3,k4=st.columns(4)
+        k1.metric("Merchants",f"{len(preds):,}")
+        k2.metric("Flagged by selected model",f"{int(preds.Prediction.sum()):,}")
+        k3.metric("Historical flagged days",f"{int(daily[flag].sum()):,}")
+        k4.metric("Captured sales (USD)",f"{daily.Daily_Sales.sum():,.2f}")
+        classification=int(preds.loc[preds.Merchant.eq(merchant),"Prediction"].iloc[0])
+        md=daily.loc[daily.Merchant.eq(merchant)].sort_values("Date")
+        marked=md.loc[md[flag]]
+        st.subheader(merchant)
+        st.write(f"**{model} classification:** {'Anomalous' if classification else 'Normal'}  |  **Historical flagged days:** {len(marked)}")
+        if prefix=="original" and model=="Isolation Forest" and (out/"merchant_risk.csv").exists():
+            risk=read_csv(out/"merchant_risk.csv")
+            if "Anomaly_Score" in risk:
+                rr=risk.loc[risk.Merchant.eq(merchant),"Anomaly_Score"]
+                if not rr.empty: st.caption(f"Isolation Forest anomaly score: {float(rr.iloc[0]):.4f} (higher = more unusual)")
+        fig=go.Figure()
+        fig.add_scatter(x=md.Date,y=md.Daily_Sales,name="Actual daily sales",mode="lines+markers",line_color="#2266aa")
+        fig.add_scatter(x=md.Date,y=md.Expected_Sales,name="Expected sales",mode="lines",line=dict(color="#7ba8d5",dash="dash"))
+        fig.add_scatter(x=marked.Date,y=marked.Daily_Sales,name="Flagged day",mode="markers",marker=dict(color="#d5363d",size=11))
+        fig.update_layout(height=420,yaxis_title="Sales (USD)",xaxis_title="Date",legend_orientation="h",margin=dict(t=25,b=30))
+        fig.update_xaxes(range=[md.Date.min(),md.Date.max()],tickformat="%d %b %Y")
+        st.plotly_chart(fig,use_container_width=True)
+        st.caption("Merchant classification covers the entire period. Red day markers come from a separate past-only deviation rule.")
+        st.subheader("Business-category investigation")
+        all_dates=sorted(md.Date.dt.date.unique())
+        preferred=marked.Date.max().date() if len(marked) else all_dates[-1]
+        day=st.selectbox("Investigate date",all_dates,index=all_dates.index(preferred))
+        bd=categories.loc[categories.Merchant.eq(merchant)&categories.Date.eq(pd.Timestamp(day))].copy()
+        if bd.empty: st.info("No business-category rows for this selection")
+        else:
+            bd["Difference USD"]=bd.Business_Sales-bd.Expected_Business_Sales
+            bd["Abs difference"]=bd["Difference USD"].abs()
+            bd=bd.sort_values("Abs difference",ascending=False)
+            shown=bd[["Business","Business_Sales","Expected_Business_Sales","Difference USD"]].rename(columns={"Business":"Category","Business_Sales":"Actual sales USD","Expected_Business_Sales":"Expected sales USD"})
+            st.dataframe(shown,use_container_width=True,hide_index=True)
+            long=shown.melt(id_vars="Category",value_vars=["Actual sales USD","Expected sales USD"],var_name="Series",value_name="USD")
+            catfig=px.bar(long,y="Category",x="USD",color="Series",barmode="group",orientation="h")
+            catfig.update_layout(height=360,yaxis=dict(categoryorder="array",categoryarray=shown.Category.iloc[::-1].tolist()),margin=dict(t=15,b=10))
+            st.plotly_chart(catfig,use_container_width=True)
+            st.caption("Category baselines are separately estimated and need not sum to the merchant expected total; deviations are investigatory signals, not proven causes.")
+        st.subheader("Merchant classifications and CSV export")
+        show=preds.copy(); show["Classification"]=show.Prediction.map({0:"Normal",1:"Anomalous"})
+        st.dataframe(show,use_container_width=True,hide_index=True)
+        st.download_button("Download model predictions",preds[["Merchant","Prediction"]].to_csv(index=False),file_name=f"predictions_{prefix}_{options[model]}.csv",mime="text/csv")
+
+    with tab_compare:
+        st.subheader("Portfolio availability and model comparison")
+        summary=[]
+        for n,(pf,d,b) in portfolios.items():
+            if not prepared_info(pf,d,b):
+                summary.append({"Portfolio":n,"Prepared sales":"Missing","Merchants":None,"Models ready":0})
+                continue
+            dat=read_csv(out/d)
+            ready_models=sum((out/f"predictions_{pf}_{short}.csv").exists() for short in models.values())
+            summary.append({"Portfolio":n,"Prepared sales":"Available","Merchants":dat.Merchant.nunique(),"Models ready":ready_models})
+        st.dataframe(pd.DataFrame(summary),use_container_width=True,hide_index=True)
+        st.subheader("Recorded external Model Evaluator results")
+        st.caption("Historical evaluator observations entered from user-provided screenshots. These results must be matched to the exact uploaded prediction files before being attributed to current outputs.")
+        eval_df=pd.DataFrame([
+            ["Original","Isolation Forest",94.3,90.9,66.7,76.9,98.9,82.8],
+            ["New","Isolation Forest",98.1,100,86.7,92.9,100,93.4],
+            ["New","Random Forest",98.1,100,86.7,92.9,100,93.4],
+            ["New","Gradient Boosting",96.2,92.3,80.0,85.7,98.9,89.5],
+            ["New","Logistic Regression",100,100,100,100,100,100]],columns=["Dataset","Model","Accuracy %","Precision %","Recall %","F1 %","Specificity %","Balanced accuracy %"])
+        st.dataframe(eval_df,use_container_width=True,hide_index=True)
+        st.plotly_chart(px.bar(eval_df.loc[eval_df.Dataset.eq("New")],x="Model",y="F1 %",title="Recorded new-portfolio F1 scores",range_y=[0,105]),use_container_width=True)
+        st.warning("Evaluator scores are not automatically recalculated from prediction CSVs: the evaluator hides its ground-truth labels. Previously uploaded versions showed conflicting anomalous counts. Reconcile submissions before making accuracy claims about current predictions.")
+        st.subheader("Available model prediction counts")
+        counts=[]
+        for pf in ("original","new"):
+            for label,short in models.items():
+                path=out/f"predictions_{pf}_{short}.csv"
+                if path.exists():
+                    f=read_csv(path);counts.append({"Dataset":pf.title(),"Model":label,"Merchants":len(f),"Flagged":int(f.Prediction.sum())})
+        if counts: st.dataframe(pd.DataFrame(counts),use_container_width=True,hide_index=True)
+
+    with tab_transactions:
+        st.subheader("Transaction exploration")
+        st.caption("Transactions are filtered to Captured status. Add compressed files in outputs/ or upload a source CSV/CSV.GZ below. Prepared daily aggregates remain available even without raw transactions.")
+        pchoice=st.selectbox("Transaction portfolio",["Original","New"],key="transactions_portfolio")
+        path=out/f"transactions_{pchoice.lower()}_captured.csv.gz"
+        upload=st.file_uploader("Optional: upload transaction file (.csv or .csv.gz) for this session",type=["csv","gz"])
+        transaction_df=None
+        if upload:
+            try:
+                transaction_df=pd.read_csv(upload,compression="gzip" if upload.name.endswith(".gz") else None,low_memory=False)
+                if "Status" in transaction_df.columns:
+                    transaction_df=transaction_df.loc[transaction_df.Status.astype(str).str.casefold().eq("captured")]
+                elif "Status_Code" in transaction_df.columns:
+                    st.warning("Status_Code supplied without status lookup. Upload a Captured-only extract or include a resolved Status column; transactions have not been filtered.")
+                    transaction_df=None
+                else:
+                    st.warning("Uploaded file has no Status field. Upload a Captured-only extract generated by batch mode.")
+                    transaction_df=None
+            except Exception as exc: st.error(f"Could not read uploaded data: {exc}")
+        elif path.exists():
+            try: transaction_df=read_transactions(path)
+            except Exception as exc: st.error(f"Could not read compressed transactions: {exc}")
+        if transaction_df is None:
+            st.info("Transaction-level file not present. Batch mode can generate compressed Captured transaction files. The dashboard still provides daily aggregation and category analysis.")
+            pf="original" if pchoice=="Original" else "new"
+            dn="daily_sales_prepared.csv" if pf=="original" else "daily_sales_new_prepared.csv"
+            if (out/dn).exists():
+                dd=read_csv(out/dn)
+                st.metric("Prepared merchant-day rows",f"{len(dd):,}")
+                st.dataframe(dd[[x for x in ["Merchant","Date","Daily_Sales","Transaction_Count"] if x in dd]].head(150),use_container_width=True,hide_index=True)
+        else:
+            st.metric("Captured transaction rows",f"{len(transaction_df):,}")
+            tdf=transaction_df
+            if "Merchant" in tdf:
+                selected_tx=st.selectbox("Filter transaction merchant",["All merchants"]+sorted(tdf.Merchant.dropna().astype(str).unique().tolist()))
+                if selected_tx!="All merchants":tdf=tdf.loc[tdf.Merchant.eq(selected_tx)]
+            if "Date" in tdf:
+                dt=pd.to_datetime(tdf.Date,errors="coerce")
+                if dt.notna().any():
+                    first,last=dt.min().date(),dt.max().date()
+                    period=st.date_input("Transaction date range",(first,last),min_value=first,max_value=last)
+                    if isinstance(period,(tuple,list)) and len(period)==2:
+                        tdf=tdf.loc[dt.dt.date.between(period[0],period[1])]
+            st.caption(f"Showing first 500 of {len(tdf):,} matching Captured transactions")
+            st.dataframe(tdf.head(500),use_container_width=True,hide_index=True)
+            st.download_button("Download filtered transactions CSV",tdf.to_csv(index=False),file_name=f"{pchoice.lower()}_captured_filtered.csv",mime="text/csv")
+
+    with tab_methods:
+        st.subheader("Method and interpretation")
+        st.markdown("**Sales:** only transactions with resolved status `Captured`. **Unit of model prediction:** one binary classification per merchant (105 per portfolio). **Daily anomaly markers:** historical baseline and robust deviation rule, distinct from merchant-level model output. **Business-category differences:** diagnostic indicators, not established causes.")
+        st.markdown("**Training:** Isolation Forest is fitted to original merchant features; supervised models are trained to reproduce its pseudo-labels. The unchanged fitted models are applied to new merchant features. Original supervised predictions are in-sample and should not be equated with independently validated performance.")
+        st.markdown("**Recorded evaluation:** screenshot scores are supplied for reference only. External hidden labels are not available; a match to the exact evaluated CSV version is needed.")
+        st.markdown("**Deployment:** raw CSVs are not needed on Streamlit Cloud when prepared outputs are available. Optional compressed Captured transaction extracts can be added to `outputs/`; avoid uploading any confidential production banking data to public GitHub.")
 
 def main(argv=None):
     import argparse
