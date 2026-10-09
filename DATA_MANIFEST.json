@@ -1,0 +1,106 @@
+{
+  "release": "V6",
+  "verified": "Uploaded prepared files identical to V5; Original RAR filtered to Captured and reconciled exactly with Original daily/category outputs; New transaction GZ reconciled exactly",
+  "files": {
+    ".gitignore": {
+      "bytes": 262,
+      "sha256": "e9f073a7485f4a639670f15630f0e3992ab836d79833a729bafc265f2b75dd5e"
+    },
+    "EXCEL_PREPARATION.md": {
+      "bytes": 1555,
+      "sha256": "d9a310b417d8030e2e747e1872235308dd392b6014f189de8a041dc400ea1fa1"
+    },
+    "GITHUB_DEPLOYMENT.md": {
+      "bytes": 2573,
+      "sha256": "02eff39758bc12129824824e32ecb9b55baab09ae6af5b88226d20aa77c183ce"
+    },
+    "README.md": {
+      "bytes": 3906,
+      "sha256": "3ec0268063c3edb2a167038e943ee367ff366599cb2fd690246ad44c3b643b9a"
+    },
+    "UPLOAD_EXAMPLES.md": {
+      "bytes": 1634,
+      "sha256": "489a94d51c2d7e29b0a5b33ff4febe9aaf0f47e0a0944c6e597076093d79c01a"
+    },
+    "app.py": {
+      "bytes": 54874,
+      "sha256": "5ea577fe1f0f858063aa8d4d296cb10203081f7c094e7d8045fb1981ca1a84b9"
+    },
+    "outputs/business_daily_new_prepared.csv": {
+      "bytes": 5680273,
+      "sha256": "5ba41dd1ff647b88c1642afc09d24eac94ecb51574859999533cbb3d00eff89a"
+    },
+    "outputs/business_daily_prepared.csv": {
+      "bytes": 5215906,
+      "sha256": "f441ba5209722f881754f485e2ade690aef8ed3b86fe3710254f7e0d2724514b"
+    },
+    "outputs/daily_sales_new_prepared.csv": {
+      "bytes": 1692496,
+      "sha256": "0dc3b7acb58e98b5287819930ed7c17f6167ada4aade254eca817f96e3dc08fd"
+    },
+    "outputs/daily_sales_prepared.csv": {
+      "bytes": 1621462,
+      "sha256": "b05c43853851db1d236b3ec7de529c758ce68a3d1398030b185ecc246940ddc5"
+    },
+    "outputs/merchant_risk.csv": {
+      "bytes": 31231,
+      "sha256": "38b49d5438441f9a0653f69c4823e584a01dc78f2db1512d2e73a84b6fedd122"
+    },
+    "outputs/predictions_new_gradient_boosting.csv": {
+      "bytes": 1896,
+      "sha256": "757751ab050a7d945a0db8de936b3cc5a0d7045265d25a24f275819b625540d2"
+    },
+    "outputs/predictions_new_isolation_forest.csv": {
+      "bytes": 1896,
+      "sha256": "2cf6d68bd0e78333af6ead8f2999dfa3970be9899f407f2326bcd791f5f3f29c"
+    },
+    "outputs/predictions_new_logistic_regression.csv": {
+      "bytes": 1896,
+      "sha256": "be852c5331b981b9964e6060e5d370d1c1dde8b521db3cadad7dac08165392ca"
+    },
+    "outputs/predictions_new_random_forest.csv": {
+      "bytes": 1896,
+      "sha256": "5a82229dce477110e3e17f550a19fec92af56684f6359388132c06c79b7e9c05"
+    },
+    "outputs/predictions_original_isolation_forest.csv": {
+      "bytes": 1694,
+      "sha256": "2179d26a565e1c01f79ada93d0bf0904fdf27e95d0d78a5b6581d2837a1349f4"
+    },
+    "outputs/transactions_new_captured.csv.gz": {
+      "bytes": 4094403,
+      "sha256": "ed8a085590e5838ecb3438f5ddf68f1069141bcb25d176108dcff5e00dc88e3d"
+    },
+    "outputs/transactions_original_captured.csv.gz": {
+      "bytes": 4464540,
+      "sha256": "d2dcee1d8b05759120766b222b7ddad7bc59515882a6348a6aa9f192622c0a0f"
+    },
+    "requirements.txt": {
+      "bytes": 96,
+      "sha256": "148945a69e8d16f7a4ca2e054bcfec38f843a78ed9f87dc46702c5bf1540c9cd"
+    },
+    "templates/sample_business_lookup.csv": {
+      "bytes": 81,
+      "sha256": "cd58f6d60151015bda494cee1a68631936dbf2a52a0aeaaa3fee62bb913d1018"
+    },
+    "templates/sample_merchant_lookup.csv": {
+      "bytes": 173,
+      "sha256": "ec7136ca4bcc69420b7e6a06a733546b0ebaf4f7a80fe358b3e44581653e5fb5"
+    },
+    "templates/sample_status_lookup.csv": {
+      "bytes": 40,
+      "sha256": "9ccafa61e6ce861a5c4c1e256e095a0968c07cd3d327f465ccd94b7a63cfaf70"
+    },
+    "templates/sample_transactions_coded.csv": {
+      "bytes": 54188,
+      "sha256": "b68634d6d7ee188dd0917f6287d0b016a9a764da24088e85a6f2e96d55a0157b"
+    },
+    "templates/sample_transactions_readable.csv": {
+      "bytes": 112737,
+      "sha256": "d18bed3b1ed85cfbce563f8638516e471b3fc11e7505d65fc3b5dab2be738c30"
+    },
+    "validate_deployment.py": {
+      "bytes": 3771,
+      "sha256": "9f3b514024661e7095c0efa3c033995d7dce775d607892d35b617caef2b47923"
+    }
+  }
+}
